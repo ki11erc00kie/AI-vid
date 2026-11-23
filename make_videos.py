@@ -214,7 +214,7 @@ def main():
             print("SKIP %s: %s" % (row.get("video_id"), why))
             continue
         todo.append(row)
-    print("%d approved rows to render (max %d)" % (len(todo), MAX_VIDEOS))
+    print("%d FACT-CHECKED rows with loop_pass TRUE to render (max %d)" % (len(todo), MAX_VIDEOS))
     for row in todo[:MAX_VIDEOS]:
         print("Rendering", row["video_id"], "-", row["topic"])
         try:
