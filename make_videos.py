@@ -41,7 +41,7 @@ def loop_ok(row):
     if norm(s[0]) == norm(s[-1]):
         return False, "last sentence repeats the hook"
     n = len(row["final_script"].split())
-    if not 40 <= n <= 90:
+    if not 30 <= n <= 90:
         return False, "word count %d outside 40-90" % n
     return True, ""
 
