@@ -283,8 +283,10 @@ def main():
         print("Rendering", row["video_id"], "-", row["topic"])
         try:
             final, wd, dur = render(row)
+                        cap = row.get("caption", "").strip()
+            tags = " ".join(t for t in row.get("hashtag", "").split() if t.lower() not in cap.lower())
             (OUT / (final.stem + "_caption.txt")).write_text(
-                (row.get("caption", "") + "\n" + row.get("hashtag", "")).strip() + "\n", encoding="utf-8")
+                (cap + "\n" + tags).strip() + "\n", encoding="utf-8")
             with open(RENDERED_FILE, "a", encoding="utf-8") as f:
                 f.write(row["video_id"].strip() + "\n")
             to_sync.append(row["video_id"].strip())
