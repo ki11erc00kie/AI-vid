@@ -68,6 +68,18 @@ def api_headers(token):
     return {"Authorization": "Bearer " + token, "Content-Type": "application/json; charset=UTF-8"}
 
 
+def whoami(token):
+    """Look up which TikTok account this token belongs to (needs the user.info.basic scope)."""
+    status, raw = http("GET", API_BASE + "/v2/user/info/?fields=open_id,display_name",
+                       {"Authorization": "Bearer " + token}, timeout=60)
+    data = parse(raw)
+    user = (data.get("data") or {}).get("user") or {}
+    err = data.get("error") or {}
+    if user:
+        return user.get("display_name") or user.get("open_id")
+    return "unknown (%s: %s)" % (err.get("code"), err.get("message"))
+
+
 def find_videos(root, max_age_seconds):
     now = time.time()
     found, skipped = [], []
@@ -122,6 +134,7 @@ def wait_for_status(publish_id, token):
         status, raw = http("POST", API_BASE + "/v2/post/publish/status/fetch/",
                            api_headers(token), json.dumps({"publish_id": publish_id}).encode(), timeout=60)
         info = parse(raw).get("data") or {}
+        print("  status response: %s" % json.dumps(info))
         state = info.get("status")
         if state:
             last = state
@@ -160,9 +173,11 @@ def main():
         try:
             if token is None:
                 token = get_token()
+                print("  token belongs to account: %s" % whoami(token))
             if i > 0:
                 time.sleep(PAUSE_BETWEEN_VIDEOS)
             publish_id = upload_video(video, token)
+            print("  publish_id: %s" % publish_id)
             state = wait_for_status(publish_id, token)
             print("  uploaded, TikTok status: %s" % state)
             summary += ["**%s** - status `%s`. Caption to paste in TikTok:" % (os.path.basename(video), state),
