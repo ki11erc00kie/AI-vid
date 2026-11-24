@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: "0 14 * * *"      # daily at 14:00 UTC; delete these two lines to run manually only
 
+concurrency:
+  group: make-videos          # never run two renders at once; the second waits for the first
+  cancel-in-progress: false
+
 jobs:
   render:
     runs-on: ubuntu-latest
@@ -40,7 +44,15 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git add rendered_ids.txt || true
-          git diff --cached --quiet || (git commit -m "Update rendered_ids" && git push)
+          if ! git diff --cached --quiet; then
+            git commit -m "Update rendered_ids"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push && break
+              echo "push attempt $i failed, retrying..."
+              git rebase --abort 2>/dev/null || true
+              sleep 5
+            done
+          fi
 
       - name: Save videos
         uses: actions/upload-artifact@v4
