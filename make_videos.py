@@ -4,7 +4,7 @@ After rendering, it tells the sheet (Apps Script web app) to mark those rows REN
 import asyncio, csv, io, json, os, random, re, subprocess, sys, time, urllib.parse
 from pathlib import Path
 import requests
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 W, H = 1080, 1920
 FPS = 30
@@ -13,6 +13,9 @@ MAX_VIDEOS = int(os.environ.get("MAX_VIDEOS", "3"))
 POLLI_TOKEN = os.environ.get("POLLINATIONS_TOKEN", "").strip()
 IMAGE_TRIES = int(os.environ.get("IMAGE_TRIES", "3"))
 RETRY_WAIT = int(os.environ.get("RETRY_WAIT", "15"))
+# Without a token, Pollinations allows about 1 image per 45 seconds per IP (over that = HTTP 402).
+IMAGE_GAP = int(os.environ.get("IMAGE_GAP", "50"))
+_last_img_req = 0.0
 WEBHOOK_URL = os.environ.get("SHEET_WEBHOOK_URL", "").strip()
 WEBHOOK_SECRET = os.environ.get("RENDER_SECRET", "").strip()
 STYLE = ("dark moody surreal digital illustration, high contrast, cinematic lighting, "
@@ -115,11 +118,23 @@ def fallback_image(seed, path):
     img.save(path, quality=92)
 
 
+def wait_for_slot():
+    """Space image requests out so the anonymous rate limit is not hit."""
+    global _last_img_req
+    if not POLLI_TOKEN:
+        wait = IMAGE_GAP - (time.time() - _last_img_req)
+        if wait > 0:
+            print("  waiting %ds for the image service..." % int(wait))
+            time.sleep(wait)
+    _last_img_req = time.time()
+
+
 def fetch_image(prompt, seed, path):
     url = ("https://image.pollinations.ai/prompt/" + urllib.parse.quote(prompt) +
            "?width=768&height=1344&nologo=true&model=flux&seed=%d" % seed)
     headers = {"Authorization": "Bearer " + POLLI_TOKEN} if POLLI_TOKEN else {}
     for attempt in range(IMAGE_TRIES):
+        wait_for_slot()
         try:
             r = requests.get(url, headers=headers, timeout=120)
             if r.status_code == 200 and r.headers.get("content-type", "").startswith("image"):
@@ -134,7 +149,8 @@ def fetch_image(prompt, seed, path):
             print("  image HTTP", r.status_code)
         except Exception as e:
             print("  image error:", str(e)[:150])
-        time.sleep(RETRY_WAIT * (attempt + 1))
+        if POLLI_TOKEN:                       # without a token, wait_for_slot() already spaces the retries
+            time.sleep(RETRY_WAIT * (attempt + 1))
     return False
 
 
@@ -167,14 +183,18 @@ def render(row):
     loop_visual = n >= 3                      # last scene reuses image 1 so last frame == first frame
     unique = n - 1 if loop_visual else n
     imgs = []
+    last_good = None
     for i in range(unique):
         p = "%s. %s. %s" % (row["topic"].split(":")[0], phrases[i], STYLE)
         path = wd / ("img%d.jpg" % i)
-        if i > 0 and not POLLI_TOKEN:
-            time.sleep(8)                     # be gentle with the free image service
-        ok = fetch_image(p, random.randint(1, 99999), path)
-        if not ok:
-            print("  using gradient fallback for scene", i + 1)
+        ok = fetch_image(p, random.randint(1, 99999), path)   # spaces requests out itself
+        if ok:
+            last_good = path
+        elif last_good:
+            print("  scene %d: reusing the previous picture (mirrored)" % (i + 1))
+            ImageOps.mirror(Image.open(last_good)).save(path, quality=92)
+        else:
+            print("  scene %d: no picture yet, using gradient fallback" % (i + 1))
             fallback_image(i + hash(vid) % 1000, path)
         imgs.append(path)
     scenes = imgs + ([imgs[0]] if loop_visual else [])
