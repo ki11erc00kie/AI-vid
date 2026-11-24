@@ -5,10 +5,6 @@ on:
   schedule:
     - cron: "0 14 * * *"      # daily at 14:00 UTC; delete these two lines to run manually only
 
-concurrency:
-  group: make-videos          # never run two renders at once; the second waits for the first
-  cancel-in-progress: false
-
 jobs:
   render:
     runs-on: ubuntu-latest
@@ -33,10 +29,17 @@ jobs:
         env:
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
           POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
-          SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}
-          RENDER_SECRET: ${{ secrets.RENDER_SECRET }}
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+          APPS_SCRIPT_SECRET: ${{ secrets.APPS_SCRIPT_SECRET }}
           VOICE: en-US-AndrewNeural
           MAX_VIDEOS: "3"
+
+      - name: Upload new videos to TikTok drafts
+        continue-on-error: true
+        env:
+          TIKTOK_TOKEN_URL: ${{ secrets.TIKTOK_TOKEN_URL }}
+          TIKTOK_TOKEN_SECRET: ${{ secrets.TIKTOK_TOKEN_SECRET }}
+        run: python upload_to_tiktok.py . --dry-run
 
       - name: Remember which videos were rendered
         if: always()
@@ -44,15 +47,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git add rendered_ids.txt || true
-          if ! git diff --cached --quiet; then
-            git commit -m "Update rendered_ids"
-            for i in 1 2 3; do
-              git pull --rebase origin main && git push && break
-              echo "push attempt $i failed, retrying..."
-              git rebase --abort 2>/dev/null || true
-              sleep 5
-            done
-          fi
+          git diff --cached --quiet || (git commit -m "Update rendered_ids" && git push)
 
       - name: Save videos
         uses: actions/upload-artifact@v4
