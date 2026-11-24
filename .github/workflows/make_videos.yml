@@ -39,7 +39,7 @@ jobs:
         env:
           TIKTOK_TOKEN_URL: ${{ secrets.TIKTOK_TOKEN_URL }}
           TIKTOK_TOKEN_SECRET: ${{ secrets.TIKTOK_TOKEN_SECRET }}
-        run: python upload_to_tiktok.py output --dry-run
+        run: python upload_to_tiktok.py output
 
       - name: Remember which videos were rendered
         if: always()
