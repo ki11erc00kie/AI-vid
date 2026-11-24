@@ -29,6 +29,8 @@ jobs:
         env:
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
           POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
+          SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}
+          RENDER_SECRET: ${{ secrets.RENDER_SECRET }}
           VOICE: en-US-AndrewNeural
           MAX_VIDEOS: "3"
 
