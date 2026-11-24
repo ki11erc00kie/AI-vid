@@ -1,6 +1,7 @@
 """Paradox TikTok video maker: Google Sheet (published CSV) -> AI voice + AI images + captions -> looping 9:16 MP4.
-Runs on GitHub Actions. Only rows with status FACT-CHECKED and loop_pass TRUE are rendered."""
-import asyncio, csv, io, os, random, re, subprocess, sys, time, urllib.parse
+Runs on GitHub Actions. Only rows with status FACT-CHECKED and loop_pass TRUE are rendered.
+After rendering, it tells the sheet (Apps Script web app) to mark those rows RENDERED."""
+import asyncio, csv, io, json, os, random, re, subprocess, sys, time, urllib.parse
 from pathlib import Path
 import requests
 from PIL import Image, ImageDraw
@@ -12,6 +13,8 @@ MAX_VIDEOS = int(os.environ.get("MAX_VIDEOS", "3"))
 POLLI_TOKEN = os.environ.get("POLLINATIONS_TOKEN", "").strip()
 IMAGE_TRIES = int(os.environ.get("IMAGE_TRIES", "3"))
 RETRY_WAIT = int(os.environ.get("RETRY_WAIT", "15"))
+WEBHOOK_URL = os.environ.get("SHEET_WEBHOOK_URL", "").strip()
+WEBHOOK_SECRET = os.environ.get("RENDER_SECRET", "").strip()
 STYLE = ("dark moody surreal digital illustration, high contrast, cinematic lighting, "
          "deep blue and purple palette, vertical composition, no text, no words, no letters, no people's faces")
 OUT, WORK = Path("output"), Path("work")
@@ -50,7 +53,7 @@ def loop_ok(row):
 def speakable(text):
     t = re.sub(r"\s+", " ", text.strip())
     # trailing comma/ellipsis removed so the voice does not drop into a "full stop" tone before the loop
-    return re.sub(r"(?:\.\.\.|[,;:\u2026])+$", "", t).strip()
+    return re.sub(r"(?:\.\.\.|[,;:…])+$", "", t).strip()
 
 
 async def tts(text, mp3):
@@ -204,6 +207,35 @@ def load_rendered():
     return set()
 
 
+def notify_sheet(ids):
+    """Tell the sheet these video_ids are rendered. Never raises: a failure here must not break the run.
+    Anything missed is retried on the next run (rows already in rendered_ids.txt but still FACT-CHECKED
+    in the sheet are re-sent by main)."""
+    if not ids:
+        print("Sheet update: nothing to report.")
+        return
+    if not WEBHOOK_URL or not WEBHOOK_SECRET:
+        print("Sheet update skipped: SHEET_WEBHOOK_URL or RENDER_SECRET is not set.")
+        return
+    payload = json.dumps({"secret": WEBHOOK_SECRET, "video_ids": ids})
+    for attempt in range(3):
+        try:
+            r = requests.post(WEBHOOK_URL, data=payload,
+                              headers={"Content-Type": "text/plain"}, timeout=60)
+            try:
+                body = r.json()
+            except ValueError:
+                body = {}
+            if r.status_code == 200 and body.get("ok"):
+                print("Sheet update: marked %s row(s) RENDERED." % body.get("updated"))
+                return
+            print("Sheet update attempt %d: HTTP %s %s" % (attempt + 1, r.status_code, r.text[:150]))
+        except Exception as e:
+            print("Sheet update attempt %d error: %s" % (attempt + 1, str(e)[:150]))
+        time.sleep(5 * (attempt + 1))
+    print("Sheet update FAILED; it will be retried on the next run.")
+
+
 def main():
     url = os.environ.get("SHEET_CSV_URL", "").strip()
     if not url:
@@ -213,11 +245,13 @@ def main():
     rows = list(csv.DictReader(io.StringIO(resp.content.decode("utf-8-sig"))))
     done_ids = load_rendered()
     todo = []
+    to_sync = []   # video_ids to mark RENDERED in the sheet
     for row in rows:
         if row.get("status", "").strip().upper().replace("_", "-") != "FACT-CHECKED":
             continue
         if row.get("video_id", "").strip() in done_ids:
             print("SKIP %s: already rendered" % row.get("video_id"))
+            to_sync.append(row["video_id"].strip())   # rendered earlier, but the sheet still says FACT-CHECKED
             continue
         ok, why = loop_ok(row)
         if not ok:
@@ -233,9 +267,11 @@ def main():
                 (row.get("caption", "") + "\n" + row.get("hashtag", "")).strip() + "\n", encoding="utf-8")
             with open(RENDERED_FILE, "a", encoding="utf-8") as f:
                 f.write(row["video_id"].strip() + "\n")
+            to_sync.append(row["video_id"].strip())
             print("  done:", final)
         except Exception as e:
             print("  FAILED:", str(e)[:600])
+    notify_sheet(sorted(set(to_sync)))
 
 
 if __name__ == "__main__":
