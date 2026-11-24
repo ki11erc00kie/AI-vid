@@ -29,8 +29,8 @@ jobs:
         env:
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
           POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
-          APPS_SCRIPT_URL: ${{ secrets.TIKTOK_TOKEN_URL }}
-          APPS_SCRIPT_SECRET: ${{ secrets.TIKTOK_TOKEN_SECRET }}
+          SHEET_WEBHOOK_URL: ${{ secrets.TIKTOK_TOKEN_URL }}
+          RENDER_SECRET: ${{ secrets.TIKTOK_TOKEN_SECRET }}
           VOICE: en-US-AndrewNeural
           MAX_VIDEOS: "3"
 
