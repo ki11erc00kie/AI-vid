@@ -1,5 +1,5 @@
 """Paradox TikTok video maker: Google Sheet (published CSV) -> AI voice + AI images + captions -> looping 9:16 MP4.
-Runs on GitHub Actions. Only rows with status APPROVED and loop_pass TRUE are rendered."""
+Runs on GitHub Actions. Only rows with status FACT-CHECKED and loop_pass TRUE are rendered."""
 import asyncio, csv, io, os, random, re, subprocess, sys, time, urllib.parse
 from pathlib import Path
 import requests
@@ -15,6 +15,7 @@ RETRY_WAIT = int(os.environ.get("RETRY_WAIT", "15"))
 STYLE = ("dark moody surreal digital illustration, high contrast, cinematic lighting, "
          "deep blue and purple palette, vertical composition, no text, no words, no letters, no people's faces")
 OUT, WORK = Path("output"), Path("work")
+RENDERED_FILE = Path("rendered_ids.txt")   # remembers finished videos so they are not rendered twice
 
 
 def run(cmd):
@@ -42,7 +43,7 @@ def loop_ok(row):
         return False, "last sentence repeats the hook"
     n = len(row["final_script"].split())
     if not 30 <= n <= 90:
-        return False, "word count %d outside 40-90" % n
+        return False, "word count %d outside 30-90" % n
     return True, ""
 
 
@@ -146,85 +147,4 @@ def clip(img, frames, zoom_in, path):
     vf = ("scale=1296:2304,zoompan=z='%s':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d=%d:s=%dx%d:fps=%d,format=yuv420p"
           % (z, frames, W, H, FPS))
     run(["ffmpeg", "-y", "-i", str(img), "-vf", vf, "-frames:v", str(frames), "-r", str(FPS),
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", str(path)])
-
-
-def render(row):
-    vid = re.sub(r"[^A-Za-z0-9_-]", "_", row["video_id"])
-    wd = WORK / vid
-    wd.mkdir(parents=True, exist_ok=True)
-    script = speakable(row["final_script"])
-    mp3 = wd / "voice.mp3"
-    words = asyncio.run(tts(script, mp3))
-    dur = audio_seconds(mp3)
-    print("  voice: %.1fs, %d word timings" % (dur, len(words)))
-
-    phrases = beats(row)
-    n = len(phrases)
-    loop_visual = n >= 3                      # last scene reuses image 1 so last frame == first frame
-    unique = n - 1 if loop_visual else n
-    imgs = []
-    for i in range(unique):
-        p = "%s. %s. %s" % (row["topic"].split(":")[0], phrases[i], STYLE)
-        path = wd / ("img%d.jpg" % i)
-        if i > 0 and not POLLI_TOKEN:
-            time.sleep(8)                     # be gentle with the free image service
-        ok = fetch_image(p, random.randint(1, 99999), path)
-        if not ok:
-            print("  using gradient fallback for scene", i + 1)
-            fallback_image(i + hash(vid) % 1000, path)
-        imgs.append(path)
-    scenes = imgs + ([imgs[0]] if loop_visual else [])
-
-    total_frames = int(round(dur * FPS))
-    per = total_frames // len(scenes)
-    clips = []
-    for i, img in enumerate(scenes):
-        frames = per if i < len(scenes) - 1 else total_frames - per * (len(scenes) - 1)
-        cp = wd / ("clip%d.mp4" % i)
-        clip(img, frames, zoom_in=not (loop_visual and i == len(scenes) - 1), path=cp)
-        clips.append(cp)
-    (wd / "list.txt").write_text("".join("file '%s'\n" % c.name for c in clips))
-    run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(wd / "list.txt"), "-c", "copy", str(wd / "video.mp4")])
-
-    ass = wd / "captions.ass"
-    write_ass(words, script, dur, ass)
-    OUT.mkdir(exist_ok=True)
-    final = OUT / (vid + ".mp4")
-    run(["ffmpeg", "-y", "-i", str(wd / "video.mp4"), "-i", str(mp3),
-         "-vf", "eq=brightness=-0.08,ass=%s" % ass.as_posix(),
-         "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-         "-c:a", "aac", "-b:a", "160k", "-t", "%.3f" % dur, "-movflags", "+faststart", str(final)])
-    return final, wd, dur
-
-
-def main():
-    url = os.environ.get("SHEET_CSV_URL", "").strip()
-    if not url:
-        sys.exit("SHEET_CSV_URL secret is missing.")
-    resp = requests.get(url, timeout=60)
-    resp.raise_for_status()
-    rows = list(csv.DictReader(io.StringIO(resp.content.decode("utf-8-sig"))))
-    todo = []
-    for row in rows:
-        if row.get("status", "").strip().upper() != "APPROVED":
-            continue
-        ok, why = loop_ok(row)
-        if not ok:
-            print("SKIP %s: %s" % (row.get("video_id"), why))
-            continue
-        todo.append(row)
-    print("%d FACT-CHECKED rows with loop_pass TRUE to render (max %d)" % (len(todo), MAX_VIDEOS))
-    for row in todo[:MAX_VIDEOS]:
-        print("Rendering", row["video_id"], "-", row["topic"])
-        try:
-            final, wd, dur = render(row)
-            (OUT / (final.stem + "_caption.txt")).write_text(
-                (row.get("caption", "") + "\n" + row.get("hashtag", "")).strip() + "\n", encoding="utf-8")
-            print("  done:", final)
-        except Exception as e:
-            print("  FAILED:", str(e)[:600])
-
-
-if __name__ == "__main__":
-    main()
+         "-c:v", "libx264",
