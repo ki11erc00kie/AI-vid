@@ -147,4 +147,4 @@ def clip(img, frames, zoom_in, path):
     vf = ("scale=1296:2304,zoompan=z='%s':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d=%d:s=%dx%d:fps=%d,format=yuv420p"
           % (z, frames, W, H, FPS))
     run(["ffmpeg", "-y", "-i", str(img), "-vf", vf, "-frames:v", str(frames), "-r", str(FPS),
-         "-c:v", "libx264",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", str(path)])
