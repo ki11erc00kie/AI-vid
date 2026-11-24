@@ -148,3 +148,95 @@ def clip(img, frames, zoom_in, path):
           % (z, frames, W, H, FPS))
     run(["ffmpeg", "-y", "-i", str(img), "-vf", vf, "-frames:v", str(frames), "-r", str(FPS),
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", str(path)])
+
+def render(row):
+    vid = re.sub(r"[^A-Za-z0-9_-]", "_", row["video_id"])
+    wd = WORK / vid
+    wd.mkdir(parents=True, exist_ok=True)
+    script = speakable(row["final_script"])
+    mp3 = wd / "voice.mp3"
+    words = asyncio.run(tts(script, mp3))
+    dur = audio_seconds(mp3)
+    print("  voice: %.1fs, %d word timings" % (dur, len(words)))
+
+    phrases = beats(row)
+    n = len(phrases)
+    loop_visual = n >= 3                      # last scene reuses image 1 so last frame == first frame
+    unique = n - 1 if loop_visual else n
+    imgs = []
+    for i in range(unique):
+        p = "%s. %s. %s" % (row["topic"].split(":")[0], phrases[i], STYLE)
+        path = wd / ("img%d.jpg" % i)
+        if i > 0 and not POLLI_TOKEN:
+            time.sleep(8)                     # be gentle with the free image service
+        ok = fetch_image(p, random.randint(1, 99999), path)
+        if not ok:
+            print("  using gradient fallback for scene", i + 1)
+            fallback_image(i + hash(vid) % 1000, path)
+        imgs.append(path)
+    scenes = imgs + ([imgs[0]] if loop_visual else [])
+
+    total_frames = int(round(dur * FPS))
+    per = total_frames // len(scenes)
+    clips = []
+    for i, img in enumerate(scenes):
+        frames = per if i < len(scenes) - 1 else total_frames - per * (len(scenes) - 1)
+        cp = wd / ("clip%d.mp4" % i)
+        clip(img, frames, zoom_in=not (loop_visual and i == len(scenes) - 1), path=cp)
+        clips.append(cp)
+    (wd / "list.txt").write_text("".join("file '%s'\n" % c.name for c in clips))
+    run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(wd / "list.txt"), "-c", "copy", str(wd / "video.mp4")])
+
+    ass = wd / "captions.ass"
+    write_ass(words, script, dur, ass)
+    OUT.mkdir(exist_ok=True)
+    final = OUT / (vid + ".mp4")
+    run(["ffmpeg", "-y", "-i", str(wd / "video.mp4"), "-i", str(mp3),
+         "-vf", "eq=brightness=-0.08,ass=%s" % ass.as_posix(),
+         "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+         "-c:a", "aac", "-b:a", "160k", "-t", "%.3f" % dur, "-movflags", "+faststart", str(final)])
+    return final, wd, dur
+
+
+def load_rendered():
+    if RENDERED_FILE.exists():
+        return {l.strip() for l in RENDERED_FILE.read_text().splitlines() if l.strip()}
+    return set()
+
+
+def main():
+    url = os.environ.get("SHEET_CSV_URL", "").strip()
+    if not url:
+        sys.exit("SHEET_CSV_URL secret is missing.")
+    resp = requests.get(url, timeout=60)
+    resp.raise_for_status()
+    rows = list(csv.DictReader(io.StringIO(resp.content.decode("utf-8-sig"))))
+    done_ids = load_rendered()
+    todo = []
+    for row in rows:
+        if row.get("status", "").strip().upper().replace("_", "-") != "FACT-CHECKED":
+            continue
+        if row.get("video_id", "").strip() in done_ids:
+            print("SKIP %s: already rendered" % row.get("video_id"))
+            continue
+        ok, why = loop_ok(row)
+        if not ok:
+            print("SKIP %s: %s" % (row.get("video_id"), why))
+            continue
+        todo.append(row)
+    print("%d FACT-CHECKED rows with loop_pass TRUE to render (max %d)" % (len(todo), MAX_VIDEOS))
+    for row in todo[:MAX_VIDEOS]:
+        print("Rendering", row["video_id"], "-", row["topic"])
+        try:
+            final, wd, dur = render(row)
+            (OUT / (final.stem + "_caption.txt")).write_text(
+                (row.get("caption", "") + "\n" + row.get("hashtag", "")).strip() + "\n", encoding="utf-8")
+            with open(RENDERED_FILE, "a", encoding="utf-8") as f:
+                f.write(row["video_id"].strip() + "\n")
+            print("  done:", final)
+        except Exception as e:
+            print("  FAILED:", str(e)[:600])
+
+
+if __name__ == "__main__":
+    main()
