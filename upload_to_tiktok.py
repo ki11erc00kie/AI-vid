@@ -152,6 +152,12 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    if not args.dry_run:
+        try:
+            print("TikTok account for this token: %s" % whoami(get_token()))
+        except Exception as e:
+            print("account check failed: %s" % e)
+
     videos, skipped = find_videos(args.root, args.max_age_hours * 3600)
     for p in skipped:
         print("skipped (no caption file next to it): %s" % p)
