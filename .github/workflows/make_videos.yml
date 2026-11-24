@@ -29,8 +29,8 @@ jobs:
         env:
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
           POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
-          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
-          APPS_SCRIPT_SECRET: ${{ secrets.APPS_SCRIPT_SECRET }}
+          APPS_SCRIPT_URL: ${{ secrets.TIKTOK_TOKEN_URL }}
+          APPS_SCRIPT_SECRET: ${{ secrets.TIKTOK_TOKEN_SECRET }}
           VOICE: en-US-AndrewNeural
           MAX_VIDEOS: "3"
 
@@ -39,7 +39,7 @@ jobs:
         env:
           TIKTOK_TOKEN_URL: ${{ secrets.TIKTOK_TOKEN_URL }}
           TIKTOK_TOKEN_SECRET: ${{ secrets.TIKTOK_TOKEN_SECRET }}
-        run: python upload_to_tiktok.py . --dry-run
+        run: python upload_to_tiktok.py output --dry-run
 
       - name: Remember which videos were rendered
         if: always()
